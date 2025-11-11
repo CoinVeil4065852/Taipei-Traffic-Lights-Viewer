@@ -1,245 +1,314 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import Box from "@mui/joy/Box";
+import Sheet from "@mui/joy/Sheet";
+import Button from "@mui/joy/Button";
+import Stack from "@mui/joy/Stack";
+import Typography from "@mui/joy/Typography";
+import { TrafficLightTimings, TrafficLightSchedule } from "@/lib/trafficParser";
 
 interface TrafficImage {
   dataUrl: string;
   typeCode?: string | null;
   phaseIndex?: number | null;
 }
+
 interface PhaseInfo {
-  phase: string;
+  phaseType: string;
   phaseIndex: number;
-  typeCode?: string;
   remainingSeconds: number;
 }
 
-export default function TrafficLivePage() {
-  const [pdfUrl, setPdfUrl] = useState<string>("");
+export default function TrafficPage() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const urlParam = params.get("url");
+  const idParam = params.get("id");
+
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<TrafficImage[]>([]);
-  const [typeMap, setTypeMap] = useState<any>({});
-  const [scheduleMap, setScheduleMap] = useState<any>({});
+  const [imagesByType, setImagesByType] = useState<Record<string, string[]>>({});
+  const [timingMap, setTimingMap] = useState<Record<string, TrafficLightTimings>>({});
+  const [scheduleMap, setScheduleMap] = useState<TrafficLightSchedule>({});
   const [phase, setPhase] = useState<PhaseInfo | null>(null);
-  const [isMobile, setIsMobile] = useState<boolean>(false);
-  const imageRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const imageRowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const url = params.get("url");
-    const id = params.get("id");
-    const PDF_BASE = "https://www.ttcx.dot.gov.taipei/cpt/api/TimingPlan/pdf/";
-    const finalUrl = url ?? (id ? `${PDF_BASE}${id}` : null);
-    if (!finalUrl) {
-      setLoading(false);
-      return;
-    }
-    setPdfUrl(finalUrl);
-    setLoading(true);
-
-    (async () => {
+    const fetchData = async () => {
+      setLoading(true);
+      setError(null);
       try {
-  const res = await fetch(`/api/extract/node?url=${encodeURIComponent(finalUrl as string)}`);
+        const apiUrl = urlParam
+          ? `/api/extract/node?url=${encodeURIComponent(urlParam)}`
+          : idParam
+            ? `/api/extract/node?id=${encodeURIComponent(idParam)}`
+            : null;
+
+        if (!apiUrl) {
+          setError("Missing ?url= or ?id= parameter");
+          setLoading(false);
+          return;
+        }
+
+        const res = await fetch(apiUrl);
+        if (!res.ok) throw new Error(`Extractor returned ${res.status}`);
         const json = await res.json();
-        if (json.error) throw new Error(json.error);
-        setTypeMap(json.typeMap ?? {});
+        if (json.error) throw new Error(json.error || "Unknown extractor error");
+        setTimingMap(json.timingMap ?? {});
         setScheduleMap(json.scheduleMap ?? {});
-        setImages((json.images ?? []) as TrafficImage[]);
-      } catch (err) {
-        console.error("extract failed:", err);
+
+        // Support two image formats from the API.
+        // Legacy: images is an array of { dataUrl, typeCode, phaseIndex }
+        // New: images is an object { typeCode: [dataUrl1, dataUrl2, ...], ... }
+        const imgsOut: TrafficImage[] = [];
+        const grouped: Record<string, string[]> = {};
+        if (json.images) {
+          if (Array.isArray(json.images)) {
+            for (const it of json.images) {
+              imgsOut.push({ dataUrl: it.dataUrl, typeCode: it.typeCode, phaseIndex: it.phaseIndex });
+              const k = String(it.typeCode ?? "unknown").toUpperCase().trim();
+              (grouped[k] = grouped[k] || []).push(String(it.dataUrl));
+            }
+          } else if (typeof json.images === "object") {
+            // api returns grouped data URLs: { typeCode: [dataUrl1, dataUrl2, ...] }
+            for (const [type, arr] of Object.entries(json.images)) {
+              if (!Array.isArray(arr)) continue;
+              const k = String(type ?? "unknown").toUpperCase().trim();
+              grouped[k] = arr.map((d) => String(d));
+              for (const dataUrl of arr) {
+                imgsOut.push({ dataUrl: String(dataUrl), typeCode: type, phaseIndex: null });
+              }
+            }
+          }
+        }
+
+        setImages(imgsOut);
+        setImagesByType(grouped);
+      } catch (err: any) {
+        setError(String(err.message || err));
       } finally {
         setLoading(false);
       }
-    })();
-  }, []);
+    };
 
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 640);
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    fetchData();
+  }, [urlParam, idParam]);
 
+  // phase updater
   useEffect(() => {
-    if (!Object.keys(scheduleMap).length) return;
-    const t = setInterval(() => {
+    if (!scheduleMap || Object.keys(scheduleMap).length === 0) return;
+
+    const tick = () => {
       const now = new Date();
       const hh = now.getHours().toString().padStart(2, "0");
       const mm = now.getMinutes().toString().padStart(2, "0");
       const ss = now.getSeconds().toString().padStart(2, "0");
       const timeStr = `${hh}:${mm}:${ss}`;
       const day = now.getDay() === 0 ? 7 : now.getDay();
-      const info = getPhaseAndRemainingSeconds(timeStr, day, typeMap, scheduleMap);
+      const info = computeCurrentPhase(timeStr, day, timingMap, scheduleMap);
       setPhase(info);
-    }, 1000);
-    return () => clearInterval(t);
-  }, [typeMap, scheduleMap]);
+    };
 
-  // Scroll the current phase image into view on desktop
-  useEffect(() => {
-    if (!phase) return;
-    if (!phase.typeCode) return;
-    if (isMobile) return;
-            const imgsOfType = images.filter((img) => img.typeCode === phase.typeCode).sort((a, b) => (a.phaseIndex ?? 0) - (b.phaseIndex ?? 0));
-            const currentIdx = imgsOfType.findIndex((im) => im.phaseIndex === phase.phaseIndex);
-            const n = imgsOfType.length;
-            const targetIdx = Math.floor(n / 2);
-            const rotateBy = ((currentIdx - targetIdx) % n + n) % n; // left rotation amount
-            const rotated = imgsOfType.slice(rotateBy).concat(imgsOfType.slice(0, rotateBy));
-            const key = `${phase.typeCode}-${phase.phaseIndex}`;
-    const el = imageRefs.current[key];
-    if (el && typeof (el as any).scrollIntoView === "function") {
-      try {
-        (el as any).scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-      } catch {}
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [timingMap, scheduleMap]);
+
+  // compute displayed images: if API provided grouped images, use imagesByType
+  // otherwise fall back to the previous orderedImages logic
+  /**
+   * Select images to display for a given computed phase.
+   * - Prefer grouped images by the schedule-selected typeCode (phase.typeCode).
+   * - Use phase.phaseIndex (1-based) to choose the current image within the group.
+   * - If grouped images are missing, fall back to the flattened `images` array
+   *   and try to find candidates by matching typeCode, then phaseIndex, then any.
+   */
+  function selectImagesForPhase(
+    phase: PhaseInfo,
+    imagesByType: Record<string, string[]>,
+    flatImages: TrafficImage[]
+  ): Array<{ dataUrl: string; typeCode?: string | null; originalIndex: number; isCurrent: boolean }> {
+    if (!phase) return [];
+
+    const typeKey = String(phase.phaseType ?? "").toUpperCase().trim();
+
+    // If grouped images exist for this type, use them directly.
+    const grouped = imagesByType[typeKey];
+    if (grouped && grouped.length > 0) {
+      const n = grouped.length;
+      let idx = 0;
+      if (phase.phaseIndex != null && Number.isFinite(Number(phase.phaseIndex))) {
+        idx = Math.max(0, Math.min(n - 1, Number(phase.phaseIndex) - 1));
+      }
+
+      // Rotate so the chosen index is centered in the returned array.
+      const startPos = (idx - Math.floor(n / 2) + n) % n;
+      const rotated = grouped.slice(startPos).concat(grouped.slice(0, startPos));
+
+      return rotated.map((dataUrl, i) => {
+        const originalIndex = (startPos + i) % n;
+        return { dataUrl, typeCode: typeKey, originalIndex, isCurrent: originalIndex === idx };
+      });
     }
-  }, [phase, isMobile]);
+
+    // Fallback: use flattened images. Prefer same typeCode, then matching phaseIndex.
+    const mapped = flatImages.map((img) => ({ img, tc: String(img.typeCode ?? "").toUpperCase().trim(), pi: img.phaseIndex != null ? Number(img.phaseIndex) : null }));
+
+    let candidates = mapped.filter((m) => m.tc && typeKey && m.tc === typeKey).map((m) => m.img);
+    if (candidates.length === 0) {
+      const byPhase = mapped.filter((m) => m.pi != null && m.pi === phase.phaseIndex).map((m) => m.img);
+      if (byPhase.length > 0) candidates = byPhase;
+    }
+    if (candidates.length === 0) {
+      const withPi = mapped.filter((m) => m.pi != null).map((m) => m.img);
+      if (withPi.length > 0) candidates = withPi;
+    }
+    if (candidates.length === 0) candidates = flatImages.slice();
+
+    // Sort by phaseIndex when available for stable ordering.
+    const sorted = candidates.slice().sort((a, b) => {
+      const ai = a.phaseIndex != null ? Number(a.phaseIndex) : Number.MAX_SAFE_INTEGER;
+      const bi = b.phaseIndex != null ? Number(b.phaseIndex) : Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    });
+
+    const n = sorted.length;
+    if (n === 0) return [];
+
+    // Find a current position in the sorted list (match phaseIndex when possible).
+    const curPos = sorted.findIndex((im) => Number(im.phaseIndex ?? -999) === Number(phase.phaseIndex ?? -999));
+    const pos = curPos >= 0 ? curPos : 0;
+    const startPos = (pos - Math.floor(n / 2) + n) % n;
+    const rotated = sorted.slice(startPos).concat(sorted.slice(0, startPos));
+
+    const baseIndexes = sorted.map((im, idx) => (im.phaseIndex != null ? Number(im.phaseIndex) : idx + 1));
+    const rotatedIndexes = baseIndexes.slice(startPos).concat(baseIndexes.slice(0, startPos));
+
+    return rotated.map((img, i) => ({ dataUrl: img.dataUrl, typeCode: img.typeCode, originalIndex: rotatedIndexes[i] - 1, isCurrent: Number(img.phaseIndex ?? -999) === Number(phase.phaseIndex ?? -999) }));
+  }
+
+  const displayedImages = React.useMemo(() => {
+    if (!phase) return [];
+    return selectImagesForPhase(phase, imagesByType, images);
+  }, [phase, imagesByType, images]);
 
   if (loading) return <div className="p-6">Loading...</div>;
-  if (!pdfUrl) return <div className="p-6 text-red-600">Missing ?url= parameter</div>;
-  if (!phase) return <div className="p-6">No phase info yet</div>;
-
-  // Try to find best matching image:
-  // 1) Prefer image that has been assigned the same typeCode and phaseIndex (most reliable)
-  // 2) Else fall back to searching page OCR text for the phase label
-  // 3) Else use a simple phaseIndex-based selection across images
-  let match = null as TrafficImage | null;
-  if (phase.typeCode) {
-    match = images.find((i) => (i as any).typeCode === phase.typeCode && (i as any).phaseIndex === phase.phaseIndex) ?? null;
-  }
-
-  if (!match) {
-    // fallback: try to find an image whose typeCode or phaseIndex or dataUrl includes the phase label
-    // (previously we used OCR text; now that text is not exposed, we use a conservative fallback)
-    match = images.find((i) => (i.typeCode && i.typeCode.includes(phase.phase)) || (i.phaseIndex === phase.phaseIndex)) ?? null;
-  }
-
-  if (!match && images.length > 0) {
-    const idx = Math.max(0, (phase.phaseIndex - 1) % images.length);
-    match = images[idx];
-  }
+  if (error) return <div className="p-6 text-red-600">Error: {error}</div>;
+  if (!phase) return <div className="p-6">Waiting for schedule data...</div>;
 
   return (
-    <main className="min-h-screen flex items-start justify-center bg-gray-50 p-6">
-      <div className="bg-white shadow rounded-lg p-6 w-full max-w-7xl text-center">
-        <h2 className="text-xl font-semibold mb-2">Traffic Live Viewer</h2>
-        <p className="text-sm text-gray-500 mb-4">{pdfUrl}</p>
+    <Box component="main" sx={{ minHeight: '100vh', py: 6, bgcolor: 'background.body', display: 'flex', justifyContent: 'center' }}>
+      <Sheet variant="outlined" sx={{ width: '100%', maxWidth: 1200, p: 3 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
+          <Box>
+            <Typography level="title-lg">Traffic Live Viewer</Typography>
+            <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary' }}>{urlParam ?? idParam}</Typography>
+          </Box>
 
-        <div className="mb-4">
-          <div className="text-2xl font-bold text-green-600">{phase.phase}</div>
-          <div className="text-sm text-gray-700">分相 {phase.phaseIndex}</div>
-          <div className="text-sm text-gray-500">剩餘 {phase.remainingSeconds}s</div>
-        </div>
+          <Box sx={{ textAlign: 'right' }}>
+            <Typography level="title-md" sx={{ color: 'success.plainColor' }}>{phase.phaseType}</Typography>
+            <Typography level="body-md">分相 {phase.phaseIndex}</Typography>
+            <Typography level="body-sm" sx={{ color: 'text.secondary' }}>剩餘 {phase.remainingSeconds}s</Typography>
+          </Box>
+        </Stack>
 
-        <div className="mt-4">
-          {match ? (
-            <img src={match.dataUrl} alt={match.typeCode ?? "phase-image"} className="mx-auto rounded shadow max-w-full" />
-          ) : (
-            <div className="text-gray-400 italic">No image found</div>
-          )}
-        </div>
+        <Box sx={{ mb: 3 }}>
+          <Typography level="body-md" sx={{ mb: 1 }}>Phase Type: {phase.phaseType ?? "(unknown)"}</Typography>
 
-        <div className="mt-6 text-xs text-gray-400">
-          Images: {images.length} · Types: {Object.keys(typeMap ?? {}).length}
-        </div>
-        {/* Phase images grouped by type */}
-        <div className="mt-6 text-left">
-          <h3 className="text-sm font-medium mb-2">Phase images</h3>
-
-          <div className="flex flex-col gap-3">
-            {Object.entries(images.reduce((acc: Record<string, TrafficImage[]>, img) => {
-              const k = img.typeCode ?? "—";
-              (acc[k] = acc[k] || []).push(img);
-              return acc;
-            }, {})).map(([type, imgs]) => (
-              <div key={type} className="flex flex-col sm:flex-row sm:items-center gap-3 p-2 rounded border border-gray-200">
-                <div className="w-full sm:w-24 text-sm font-medium">{type}</div>
-                <div className="flex flex-row flex-wrap gap-2">
-                  {imgs.map((img, i) => (
-                    <div key={i} className="relative">
-                      <img src={img.dataUrl} alt={`type-${type}-idx-${i}`} className="w-14 h-14 object-contain rounded" />
-                      <div className="absolute -top-1 -right-1 bg-indigo-600 text-white text-[10px] px-1 rounded">{img.phaseIndex ?? (i+1)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Current-type display: show all phase images of the current type, center current + fade others */}
-        <div className="mt-6 text-left">
-          <h3 className="text-sm font-medium mb-2">Current type phases</h3>
-          {phase.typeCode ? (
-            (() => {
-                const imgsOfType = images.filter((img) => img.typeCode === phase.typeCode).sort((a, b) => (a.phaseIndex ?? 0) - (b.phaseIndex ?? 0));
-                const currentIdx = imgsOfType.findIndex((im) => im.phaseIndex === phase.phaseIndex);
-                const n = imgsOfType.length;
-                const targetIdx = Math.floor(n / 2);
-                const rotateBy = ((currentIdx - targetIdx) % n + n) % n; // left rotation amount
-                const rotated = imgsOfType.slice(rotateBy).concat(imgsOfType.slice(0, rotateBy));
-              if (isMobile) {
-                const currentIdx = imgsOfType.findIndex((im) => im.phaseIndex === phase.phaseIndex);
-                const current = imgsOfType[currentIdx] ?? null;
-                const next = imgsOfType[currentIdx + 1] ?? null;
+          {displayedImages.length > 0 ? (
+            <Box ref={imageRowRef} sx={{ display: 'flex', gap: 2, alignItems: 'center', overflowX: 'auto', py: 1 }}>
+              {displayedImages.map(({ dataUrl, typeCode, originalIndex, isCurrent }, i) => {
                 return (
-                  <div className="flex flex-col items-center gap-3">
-                    {current ? <img src={current.dataUrl} className="w-36 h-36 object-contain rounded shadow" alt="current" /> : <div className="text-gray-500">No current</div>}
-                    {next ? <img src={next.dataUrl} className="w-28 h-28 object-contain rounded opacity-70" alt="next" /> : null}
-                  </div>
-                );
-              }
+                  <Box
+                    key={`${typeCode ?? 't'}-${originalIndex}-${i}`}
+                    sx={{
+                      flex: '0 0 auto',
+                      position: 'relative',
+                      transform: isCurrent ? 'scale(1.05)' : 'scale(0.97)',
+                      opacity: isCurrent ? 1 : 0.5,
+                      filter: isCurrent ? 'none' : 'grayscale(20%) brightness(0.85)',
+                      transition: 'transform .2s, opacity .2s, filter .2s',
+                    }}
+                  >
+                    {/* index badge top-left */}
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        top: '6px',
+                        left: '6px',
+                        zIndex: 10,
+                        bgcolor: isCurrent ? 'success.softBg' : 'background.surface',
+                        color: isCurrent ? 'success.plainColor' : 'text.primary',
+                        px: 0.6,
+                        py: 0.3,
+                        borderRadius: '6px',
+                        fontSize: '0.65rem',
+                        fontWeight: 700,
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
+                      }}
+                    >
+                      {originalIndex + 1}
+                    </Box>
 
-              return (
-                <div className="w-full overflow-x-auto">
-                  <div className="flex items-center gap-4 px-4 w-max mx-auto snap-x snap-mandatory" style={{ minWidth: 240 }}>
-                      {rotated.map((im) => {
-                      const isCurrent = im.phaseIndex === phase.phaseIndex;
-                      const key = `${im.typeCode}-${im.phaseIndex}`;
-                      return (
-                        <div key={key} className="flex-shrink-0 snap-center" ref={(el) => { imageRefs.current[key] = el; }}>
-                          <img src={im.dataUrl} className={`rounded shadow transform transition-all duration-300 ${isCurrent ? "w-56 h-56 scale-105 opacity-100" : "w-28 h-28 opacity-50"}`} alt={`phase-${key}`} />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()
+                    <img
+                      src={dataUrl}
+                      alt={String(typeCode ?? '')}
+                      style={{
+                        width: isCurrent ? 208 : 112,
+                        height: isCurrent ? 208 : 112,
+                        objectFit: 'contain',
+                        borderRadius: 8,
+                        boxShadow: isCurrent ? '0 8px 20px rgba(0,0,0,0.12)' : 'none',
+                      }}
+                    />
+                  </Box>
+                );
+              })}
+            </Box>
           ) : (
-            <div className="text-gray-500">No type info for current phase</div>
+            <Typography level="body-sm" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>No images found for current type</Typography>
           )}
-        </div>
-      </div>
-    </main>
+        </Box>
+
+        <Box sx={{ mt: 3 }}>
+          <Button variant="solid" color="primary" onClick={() => router.push('/')}>Back</Button>
+        </Box>
+      </Sheet>
+    </Box>
   );
 }
 
-/* Phase calculator (same logic you used) */
-function getPhaseAndRemainingSeconds(
+/* Phase calculator copied from parser logic */
+function computeCurrentPhase(
   time: string,
   dayOfWeek: number,
-  typeMap: any,
-  scheduleMap: any
+  typeMap: Record<string, TrafficLightTimings>,
+  scheduleMap: TrafficLightSchedule
 ): PhaseInfo {
+  // scheduleMap maps dayOfWeek -> array of schedule entries { time, type }
+  // where `type` is a typeCode (e.g. '01', 'X3') that references a definition in typeMap.
   const schedule = scheduleMap[dayOfWeek];
   if (!schedule || schedule.length === 0)
-    return { phase: "", phaseIndex: -1, remainingSeconds: 0 };
+    return { phaseType: "", phaseIndex: -1, remainingSeconds: 0 };
 
-  let currentType = schedule[0].type;
+  let currentTimingType = schedule[0].timingType;
   for (const s of schedule) {
-    if (time >= s.time) currentType = s.type;
+    if (time >= s.time) currentTimingType = s.timingType;
     else break;
   }
 
-  const type = typeMap[currentType];
-  if (!type) return { phase: "", phaseIndex: -1, remainingSeconds: 0 };
+  const type = typeMap[currentTimingType];
+  if (!type) return { phaseType: "", phaseIndex: -1, remainingSeconds: 0 };
 
   const [h, m, s] = time.split(":").map(Number);
   const totalSeconds = h * 3600 + m * 60 + (s || 0);
 
   // find when this type started (last schedule entry with same type)
-  const lastEntry = [...schedule].reverse().find((e: any) => e.type === currentType);
+  const lastEntry = [...schedule].reverse().find((e: any) => e.type === currentTimingType);
   const [startH, startM] = (lastEntry?.time ?? "00:00").split(":").map(Number);
   const startSec = startH * 3600 + startM * 60;
 
@@ -248,8 +317,17 @@ function getPhaseAndRemainingSeconds(
   let sum = 0;
   for (let i = 0; i < (type.phaseDurations || []).length; i++) {
     sum += type.phaseDurations[i];
-    if (elapsed < sum) return { phase: type.phase ?? "", phaseIndex: i + 1, typeCode: currentType, remainingSeconds: sum - elapsed };
+    if (elapsed < sum)
+      return {
+        phaseType: type.phaseType ?? "",
+        phaseIndex: i + 1,
+        remainingSeconds: Math.max(0, Math.floor(sum - elapsed)),
+      };
   }
 
-  return { phase: type.phase ?? "", phaseIndex: (type.phaseDurations || []).length, typeCode: currentType, remainingSeconds: 0 };
+  return {
+    phaseType: type.phaseType ?? "",
+    phaseIndex: (type.phaseDurations || []).length,
+    remainingSeconds: 0,
+  };
 }

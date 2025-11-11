@@ -9,6 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@fontsource/inter": "^5.2.8",
+    "@mui/joy": "^5.0.0-beta.52",
     "next": "16.0.1",
     "pdfjs-dist": "^5.4.394",
     "pngjs": "^7.0.0",

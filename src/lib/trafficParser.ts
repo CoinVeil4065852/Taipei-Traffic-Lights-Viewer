@@ -1,19 +1,19 @@
 import { extractText } from "unpdf";
 
-export interface TrafficLightType {
+export interface TrafficLightTimings {
     period: number;
     offset: number;
     direction: number;
-    phase: string;
+    phaseType: string;
     phaseDurations: number[];
 }
 
 export interface ScheduleEntry {
     time: string;
-    type: string;
+    timingType: string;
 }
 
-export type TrafficLightTypeMap = Record<string, TrafficLightType>;
+export type TrafficLightTimingMap = Record<string, TrafficLightTimings>;
 export type TrafficLightSchedule = Record<number, ScheduleEntry[]>;
 
 const safe = (arr: string[], i: number) => (arr[i] ? arr[i].trim() : "");
@@ -48,10 +48,10 @@ export async function pdfToArray(arrayBuffer: ArrayBuffer): Promise<string[][]> 
  */
 export async function parseTrafficLightPDF(
     arrayBuffer: ArrayBuffer
-): Promise<{ typeMap: TrafficLightTypeMap; scheduleMap: TrafficLightSchedule }> {
+): Promise<{ timingMap: TrafficLightTimingMap; scheduleMap: TrafficLightSchedule }> {
     const rawData = await pdfToArray(arrayBuffer);
 
-    const typeMap: TrafficLightTypeMap = {};
+    const timingMap: TrafficLightTimingMap = {};
     const scheduleMap: TrafficLightSchedule = {
         1: [],
         2: [],
@@ -81,9 +81,9 @@ export async function parseTrafficLightPDF(
         // --- schedule part (left)
         for (let day = 1; day < boundary; day++) {
             const time = safe(upper, day);
-            const type = safe(lower, day);
-            if (/^\d{2}:\d{2}$/.test(time) && /^\d{2}$/.test(type)) {
-                scheduleMap[day].push({ time, type });
+            const timingType = safe(lower, day);
+            if (/^\d{2}:\d{2}$/.test(time) && /^\d{2}$/.test(timingType)) {
+                scheduleMap[day].push({ time, timingType });
             }
         }
 
@@ -96,7 +96,7 @@ export async function parseTrafficLightPDF(
             const period = parseInt(safe(upper, boundary+1), 10) || 0;
             const offset = parseInt(safe(upper, boundary + 2), 10) || 0;
             const direction = parseInt(safe(upper, boundary + 3), 10) || 0;
-            const phase = safe(upper, boundary + 4);
+            const phaseType = safe(upper, boundary + 4);
             const phaseDurations: number[] = [];
 
             for (let j = boundary + 5; j < upper.length; j++) {
@@ -104,11 +104,11 @@ export async function parseTrafficLightPDF(
                 if (!isNaN(val)) phaseDurations.push(val);
             }
 
-            typeMap[typeCode] = {
+            timingMap[typeCode] = {
                 period,
                 offset,
                 direction,
-                phase,
+                phaseType,
                 phaseDurations,
             };
         }
@@ -118,5 +118,5 @@ export async function parseTrafficLightPDF(
 
     // No secondary pass — rely on the main paired 時間/時制 parsing above.
 
-    return { typeMap, scheduleMap };
+    return { timingMap, scheduleMap };
 }

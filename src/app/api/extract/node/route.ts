@@ -38,7 +38,7 @@ export async function GET(req: Request) {
 
   // Pass a copy of the underlying buffer to parsing to avoid detaching the
   // original bytes when extractText is called internally.
-  const { typeMap, scheduleMap } = await parseTrafficLightPDF(bytes.slice().buffer);
+  const { timingMap, scheduleMap } = await parseTrafficLightPDF(bytes.slice().buffer);
   const images: Array<{ page: number; key: string; dataUrl: string }> = [];
   const imagesByPage: Record<number, Array<{ page: number; key: string; dataUrl: string }>> = {};
 
@@ -146,10 +146,16 @@ export async function GET(req: Request) {
       for (const g of imagesWithMeta) g._pageText = undefined;
     }
 
-    // Build a simplified images output (omit page/key/text and only return what client needs)
-    const imagesOut = imagesWithMeta.map((g) => ({ dataUrl: g.dataUrl, typeCode: g.typeCode, phaseIndex: g.phaseIndex }));
+    // Build a simplified images output grouped by typeCode.
+    // Each entry will be an array of full data URLs (e.g. data:image/png;base64,...).
+    const imagesByType: Record<string, string[]> = {};
+    for (const g of imagesWithMeta) {
+      const key = (g.typeCode || "unknown") as string;
+      const dataUrl = String(g.dataUrl || "");
+      (imagesByType[key] = imagesByType[key] || []).push(dataUrl);
+    }
 
-    return NextResponse.json({ typeMap, scheduleMap, images: imagesOut });
+    return NextResponse.json({  timingMap, scheduleMap, images: imagesByType });
   } catch (err: any) {
     console.error("extract error:", err?.stack || err);
     return NextResponse.json({ error: String(err.message || err) }, { status: 500 });
