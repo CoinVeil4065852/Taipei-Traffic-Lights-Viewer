@@ -210,7 +210,7 @@ export default function TrafficPage() {
           <Box>
             <Typography level="title-lg">Traffic Live Viewer</Typography>
             <Link href={fileURL ?? "#"} target="_blank" rel="noopener noreferrer">
-              <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{fileURL ?? "No URL"}</Typography>
+              PDF Source
             </Link>
           </Box>
 
