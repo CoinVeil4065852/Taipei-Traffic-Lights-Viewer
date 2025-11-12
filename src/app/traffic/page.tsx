@@ -137,15 +137,15 @@ export default function TrafficPage() {
   ): Array<{ dataUrl: string; typeCode?: string | null; originalIndex: number; isCurrent: boolean }> {
     if (!phase) return [];
 
-    const typeKey = String(phase.phaseType ?? "").toUpperCase().trim();
+    const phaseType = String(phase.phaseType ?? "").toUpperCase().trim();
 
     // If grouped images exist for this type, use them directly.
-    const grouped = imagesByType[typeKey];
+    const grouped = imagesByType[phaseType];
     if (grouped && grouped.length > 0) {
       const n = grouped.length;
       let idx = 0;
       if (phase.phaseIndex != null && Number.isFinite(Number(phase.phaseIndex))) {
-        idx = Math.max(0, Math.min(n - 1, Number(phase.phaseIndex) - 1));
+        idx = Math.max(0, Math.min(n - 1, Number(phase.phaseIndex)));
       }
 
       // Rotate so the chosen index is centered in the returned array.
@@ -154,14 +154,14 @@ export default function TrafficPage() {
 
       return rotated.map((dataUrl, i) => {
         const originalIndex = (startPos + i) % n;
-        return { dataUrl, typeCode: typeKey, originalIndex, isCurrent: originalIndex === idx };
+        return { dataUrl, typeCode: phaseType, originalIndex, isCurrent: originalIndex === idx };
       });
     }
 
     // Fallback: use flattened images. Prefer same typeCode, then matching phaseIndex.
     const mapped = flatImages.map((img) => ({ img, tc: String(img.typeCode ?? "").toUpperCase().trim(), pi: img.phaseIndex != null ? Number(img.phaseIndex) : null }));
 
-    let candidates = mapped.filter((m) => m.tc && typeKey && m.tc === typeKey).map((m) => m.img);
+    let candidates = mapped.filter((m) => m.tc && phaseType && m.tc === phaseType).map((m) => m.img);
     if (candidates.length === 0) {
       const byPhase = mapped.filter((m) => m.pi != null && m.pi === phase.phaseIndex).map((m) => m.img);
       if (byPhase.length > 0) candidates = byPhase;
