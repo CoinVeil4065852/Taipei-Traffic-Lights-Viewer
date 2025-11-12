@@ -149,7 +149,7 @@ export default function TrafficPage() {
       }
 
       // Rotate so the chosen index is centered in the returned array.
-      const startPos = (idx - Math.floor(n / 2) + n) % n;
+      const startPos = (idx - Math.ceil(n / 2) + n) % n;
       const rotated = grouped.slice(startPos).concat(grouped.slice(0, startPos));
 
       return rotated.map((dataUrl, i) => {
