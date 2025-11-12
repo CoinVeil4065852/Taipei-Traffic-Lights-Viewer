@@ -8,6 +8,7 @@ import Button from "@mui/joy/Button";
 import Stack from "@mui/joy/Stack";
 import Typography from "@mui/joy/Typography";
 import { TrafficLightTimings, TrafficLightSchedule } from "@/lib/trafficParser";
+import Link from "next/link";
 
 interface TrafficImage {
   dataUrl: string;
@@ -208,7 +209,9 @@ export default function TrafficPage() {
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
           <Box>
             <Typography level="title-lg">Traffic Live Viewer</Typography>
-            <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary' }}>{fileURL ?? "No URL"}</Typography>
+            <Link href={fileURL ?? "#"} target="_blank" rel="noopener noreferrer">
+              <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{fileURL ?? "No URL"}</Typography>
+            </Link>
           </Box>
 
           <Box sx={{ textAlign: 'right' }}>
