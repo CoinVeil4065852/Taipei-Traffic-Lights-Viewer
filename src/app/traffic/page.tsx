@@ -17,16 +17,15 @@ interface TrafficImage {
 
 interface PhaseInfo {
   phaseType: string;
-  phaseIndex: number;
+  phaseIndex: number;//zero-based
   remainingSeconds: number;
 }
 
 export default function TrafficPage() {
-  const params = useSearchParams();
-  const router = useRouter();
-  const urlParam = params.get("url");
-  const idParam = params.get("id");
 
+  const router = useRouter();
+
+  const [fileURL, setFileURL] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<TrafficImage[]>([]);
@@ -38,22 +37,24 @@ export default function TrafficPage() {
   const imageRowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    const url = useSearchParams().get("url");
+    const id = useSearchParams().get("id");
+    if (url) setFileURL(url);
+    else if (id) setFileURL(id);
+  }, []);
+
+
+  useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
+      if (!fileURL) {
+        setError("Missing ?url= or ?id= parameter");
+        setLoading(false);
+        return;
+      }
+      const apiUrl = `/api/extract/node?url=${encodeURIComponent(fileURL)}`
       try {
-        const apiUrl = urlParam
-          ? `/api/extract/node?url=${encodeURIComponent(urlParam)}`
-          : idParam
-            ? `/api/extract/node?id=${encodeURIComponent(idParam)}`
-            : null;
-
-        if (!apiUrl) {
-          setError("Missing ?url= or ?id= parameter");
-          setLoading(false);
-          return;
-        }
-
         const res = await fetch(apiUrl);
         if (!res.ok) throw new Error(`Extractor returned ${res.status}`);
         const json = await res.json();
@@ -96,7 +97,7 @@ export default function TrafficPage() {
     };
 
     fetchData();
-  }, [urlParam, idParam]);
+  }, [fileURL]);
 
   // phase updater
   useEffect(() => {
@@ -206,7 +207,7 @@ export default function TrafficPage() {
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
           <Box>
             <Typography level="title-lg">Traffic Live Viewer</Typography>
-            <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary' }}>{urlParam ?? idParam}</Typography>
+            <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary' }}>{fileURL ?? "No URL"}</Typography>
           </Box>
 
           <Box sx={{ textAlign: 'right' }}>
@@ -320,14 +321,14 @@ function computeCurrentPhase(
     if (elapsed < sum)
       return {
         phaseType: type.phaseType ?? "",
-        phaseIndex: i + 1,
+        phaseIndex: i,
         remainingSeconds: Math.max(0, Math.floor(sum - elapsed)),
       };
   }
 
   return {
     phaseType: type.phaseType ?? "",
-    phaseIndex: (type.phaseDurations || []).length,
+    phaseIndex: (type.phaseDurations || []).length - 1,
     remainingSeconds: 0,
   };
 }
