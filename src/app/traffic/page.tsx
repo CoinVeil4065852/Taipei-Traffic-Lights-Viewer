@@ -37,10 +37,11 @@ export default function TrafficPage() {
   const imageRowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const url = useSearchParams().get("url");
-    const id = useSearchParams().get("id");
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get("url");
+    const id = params.get("id");
     if (url) setFileURL(url);
-    else if (id) setFileURL(id);
+    else if (id) setFileURL(`https://www.ttcx.dot.gov.taipei/cpt/api/TimingPlan/pdf/${id}`);
   }, []);
 
 
@@ -212,7 +213,7 @@ export default function TrafficPage() {
 
           <Box sx={{ textAlign: 'right' }}>
             <Typography level="title-md" sx={{ color: 'success.plainColor' }}>{phase.phaseType}</Typography>
-            <Typography level="body-md">分相 {phase.phaseIndex}</Typography>
+            <Typography level="body-md">分相 {phase.phaseIndex + 1}</Typography>
             <Typography level="body-sm" sx={{ color: 'text.secondary' }}>剩餘 {phase.remainingSeconds}s</Typography>
           </Box>
         </Stack>
