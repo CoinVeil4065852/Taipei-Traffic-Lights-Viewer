@@ -1,5 +1,7 @@
 # Taipei Traffic Light Live Viewer Based on Calculation
 
+**This is just for demonstration purposes. This project is greatly contributed by AI-generated code.
+
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
